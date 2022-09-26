@@ -1879,7 +1879,7 @@ class Parser:
                 else_statement = self.parse_if_statement()
             elif self.current().variant == 'LCURLY':
                 block = self.parse_block()
-                if block == else_statement:
+                if block == then_block:
                     self.error('if and else have identical blocks', self.current_token_span())
                 else_statement = ParsedStatement.Block(block, self.merge_spans(start, self.previous_token_span()))
             else:
