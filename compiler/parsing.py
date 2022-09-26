@@ -2161,6 +2161,7 @@ class Parser:
         while not self.eof():
             if self.current().variant == 'IDENTIFIER':
                 parsed_import.import_list.append(ImportName(self.current().name, self.current_token_span()))
+                self.index_inc()
             elif self.current().variant in ['COMMA', 'EOL']:
                 self.index_inc()
             elif self.current().variant == 'RCURLY':
