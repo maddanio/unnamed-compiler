@@ -693,7 +693,7 @@ class Parser:
                 match op.variant:
                     case 'Operator':
                         new_span = self.merge_spans(lhs.span, rhs.span)
-                        expr_stack.append(ParsedExpression.BinaryOp(lhs, op, rhs, new_span))
+                        expr_stack.append(ParsedExpression.BinaryOp(lhs, op.op, rhs, new_span))
                     case _:
                         self.error('Operator is not an operator', op.span)
             expr_stack.append(parsed_operator)
