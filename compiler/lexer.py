@@ -301,9 +301,7 @@ class Lexer:
         escaped = False
         n = 0
         while not self.eof() and (escaped or self.peek(n) != delimiter):
-            if self.peek(n) in ['\r', '\n']:
-                pass
-            elif not escaped and self.peek(n) == '\\':
+            if not escaped and self.peek(n) == '\\':
                 escaped = True
             else:
                 escaped = False
@@ -560,7 +558,7 @@ class Lexer:
                 raise Exception("unknown base %s" % base)
         return self.take_while_with_span(lambda c: testfn(c) or c == "_")
 
-    def make_numeric_constant(self, number: str, suffix: LiteralSuffix, span: TextSpan):
+    def make_numeric_constant(self, number: str, suffix: LiteralSuffix, span: TextSpan)->Token:
         match suffix.variant:
             case 'U8':
                 return Token.NUMBER(NumericConstant.U8(number), span)
