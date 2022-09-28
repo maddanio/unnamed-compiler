@@ -552,7 +552,7 @@ class Parser:
     compiler: Compiler
     buffer: List[Token]
     previous_token: Token
-
+    reset_buffer: Optional[List[Token]] = None
     debug_info = DebugInfo()
 
     def index_inc(self, steps: int = 1, debug: bool = False):
@@ -560,11 +560,15 @@ class Parser:
         if steps_todo and self.buffer:
             buffer_steps = min(steps, len(self.buffer))
             self.previous_token = self.buffer[buffer_steps - 1]
+            if self.reset_buffer is not None:
+                self.reset_buffer += self.buffer[:buffer_steps]
             self.buffer = self.buffer[buffer_steps:]
             steps_todo -= buffer_steps
         for _ in range(steps_todo):
             try:
                 self.previous_token = next(self.lexer)
+                if self.reset_buffer is not None:
+                    self.reset_buffer.append(self.previous_token)
             except StopIteration:
                 self.is_eof = True
         if debug:
@@ -601,6 +605,24 @@ class Parser:
     def error_with_hint(self, message: str, span: FileTextSpan, hint: str, hint_span: FileTextSpan):
         if not self.compiler.ignore_parser_errors:
             self.compiler.errors.append(CompilerError.MessageWithHint(message, span, hint, hint_span))
+
+    def set_reset_point(self):
+        if self.reset_buffer is not None:
+            raise Exception("setting reset point with active reset point")
+        self.reset_buffer = [self.previous()]
+
+    def clear_reset_point(self):
+        if self.reset_buffer is None:
+            raise Exception("reset without reset point")
+        self.reset_buffer = None
+
+    def reset(self):
+        if self.reset_buffer is None:
+            raise Exception("reset without reset point")
+        self.previous_token = self.reset_buffer[0]
+        self.buffer += self.reset_buffer[1:]
+        self.index -= len(self.reset_buffer) - 1
+        self.reset_buffer = None
 
     def eof(self):
         return self.is_eof and not self.buffer
@@ -1259,9 +1281,9 @@ class Parser:
                 is_optional = self.current().variant == 'QUESTION_MARK'
                 self.index_inc()
                 if is_optional:
-                    self.index_inc()
                     if self.current().variant != 'DOT':
                         self.error('Expected `.` after `?` for optional chaining access', self.current_token_span())
+                    self.index_inc()
                 if self.current().variant == 'NUMBER':
                     number = int(self.current().value.value)
                     self.index_inc()
@@ -1269,15 +1291,13 @@ class Parser:
                             result, number, is_optional, self.merge_spans(start, self.previous_token_span()))
                 elif self.current().variant == 'IDENTIFIER':
                     # struct field access or method call
-                    name = self.current().name
-                    self.index_inc()
-                    if self.current().variant == 'LPAREN':
-                        # Step backwards because parse_call() expects to start at the callee identifier
-                        self.index -= 1
+                    if self.peek().variant == 'LPAREN':
                         call = self.parse_call()
                         result = ParsedExpression.MethodCall(result, call, is_optional,
                                                              self.merge_spans(start, self.previous_token_span()))
                     else:
+                        name = self.current().name
+                        self.index_inc()
                         result = ParsedExpression.IndexedStruct(result, name, is_optional,
                                                                 self.merge_spans(start, self.current_token_span()))
             elif self.current().variant == 'LSQUARE':
@@ -1352,30 +1372,28 @@ class Parser:
             if self.current().variant != 'IDENTIFIER':
                 self.error('Unsupported static method call', self.current_token_span())
                 return expr
-            current_name = self.current().name
-            self.index_inc()
-            if self.current().variant == 'LPAREN':
-                self.index -= 1
+            if self.peek().variant == 'LPAREN':
                 call = self.parse_call()
                 call.namespace = namespace_
                 return ParsedExpression.Call(call, self.merge_spans(expr.span, self.current_token_span()))
-            if self.current().variant == 'COLON_COLON':
-                if self.previous().variant == 'IDENTIFIER':
-                    namespace_.append(self.previous().name)
+            elif self.peek().variant == 'COLON_COLON':
+                if self.current().variant == 'IDENTIFIER':
+                    namespace_.append(self.current().name)
                 else:
                     self.error('Expected namespace', expr.span)
-                self.index_inc()
-                continue
-            if self.current().variant == 'LESS_THAN':
-                self.index -= 1
+                self.index_inc(2)
+            elif self.peek().variant == 'LESS_THAN':
                 maybe_call = self.parse_call()
                 if maybe_call is not None:
                     maybe_call.namespace = namespace_
                     return ParsedExpression.Call(maybe_call, self.merge_spans(expr.span, self.current_token_span()))
                 return ParsedExpression.Invalid(self.current_token_span())
-            return ParsedExpression.NamespacedVar(name=current_name,
-                                                  namespace=namespace_,
-                                                  span=self.merge_spans(start, self.current_token_span()))
+            else:
+                current_name = self.current().name
+                self.index_inc()
+                return ParsedExpression.NamespacedVar(name=current_name,
+                                                      namespace=namespace_,
+                                                      span=self.merge_spans(start, self.current_token_span()))
 
     def parse_function(self, linkage: FunctionLinkage, visibility: Visibility, is_comptime: bool):
         self.trace()
@@ -2016,7 +2034,7 @@ class Parser:
         call.name = self.current().name
         self.index_inc()
 
-        index_reset = self.index
+        self.set_reset_point()
 
         if self.current().variant == 'LESS_THAN':
             self.index_inc()
@@ -2034,15 +2052,16 @@ class Parser:
                         index_before = self.index
                         inner_type = self.parse_typename()
                         if index_before == self.index:
-                            self.index = index_reset
+                            self.reset()
                             break
                         inner_types.append(inner_type)
             call.type_args = inner_types
 
+        self.clear_reset_point()
+
         if self.current().variant == 'LPAREN':
             self.index_inc()
         else:
-            self.index = index_reset
             self.error('Expected `(`', self.current_token_span())
             return None
 
